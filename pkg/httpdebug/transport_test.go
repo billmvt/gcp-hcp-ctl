@@ -10,6 +10,8 @@ import (
 	"testing"
 )
 
+// TestTraceRequestMetadataWithoutChangingPayloads checks metadata-only tracing without
+// altering authentication or payloads.
 func TestTraceRequestMetadataWithoutChangingPayloads(t *testing.T) {
 	var trace bytes.Buffer
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +44,7 @@ func TestTraceRequestMetadataWithoutChangingPayloads(t *testing.T) {
 	if err != nil || string(body) != "private-response-body" {
 		t.Fatalf("response body = %q, %v", body, err)
 	}
-	for _, want := range []string{"request=1", "start", `method="POST"`, server.URL + "/resource", "complete", "status=201", "elapsed="} {
+	for _, want := range []string{"request=1", "start", `method="POST"`, "http://REDACTED/resource", "complete", "status=201", "elapsed="} {
 		if !strings.Contains(trace.String(), want) {
 			t.Errorf("trace missing %q: %s", want, trace.String())
 		}

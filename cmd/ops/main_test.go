@@ -205,6 +205,8 @@ func TestVerbosityRejectsInvalidInputBeforeHTTP(t *testing.T) {
 	}
 }
 
+// TestVerbosityHTTPInvocationIsolation checks that independent command invocations get
+// fresh trace state and writers.
 func TestVerbosityHTTPInvocationIsolation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer request-credential-secret" || r.Header.Get("Cookie") != "session=request-cookie-secret" {
@@ -302,7 +304,7 @@ func TestVerbosityHTTPInvocationIsolation(t *testing.T) {
 			}
 			assertProgressiveTrace(t, stderr.String(), tc.level)
 			if tc.level >= 6 {
-				for _, want := range []string{"start", `method="GET"`, server.URL + "/probe", "complete", "status=200", "elapsed="} {
+				for _, want := range []string{"start", `method="GET"`, "http://REDACTED/probe", "complete", "status=200", "elapsed="} {
 					if !strings.Contains(stderr.String(), want) {
 						t.Errorf("stderr missing %q: %s", want, stderr.String())
 					}

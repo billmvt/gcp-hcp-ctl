@@ -13,6 +13,7 @@ import (
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/infra/network"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/nodepool"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/ops"
+	"github.com/openshift-online/gcp-hcp-ctl/pkg/platformrole"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/regions"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/role"
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/rolebinding"
@@ -72,6 +73,7 @@ Configuration priority: CLI flags > environment variables > config file (~/.gcph
 		iam.NewIAMCmd(cfg),
 		network.NewNetworkCmd(),
 		role.NewRoleCmd(),
+		platformrole.NewPlatformRoleCmd(),
 		rolebinding.NewRoleBindingCmd(),
 		cluster.NewClusterCmd(cfg),
 		nodepool.NewNodePoolCmd(cfg),

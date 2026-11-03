@@ -204,8 +204,11 @@ removes this capture limit too and can consume substantial memory for large JSON
 responses. Recognized streams are not captured, and no response is forced to completion.
 
 Authorization, cookies, API keys, and unknown header values are masked. URL
-userinfo/fragments are omitted, workflow callback identifiers are redacted, and
-query values are redacted by default except narrowly validated metadata values.
+hostnames/IP addresses and ports are replaced with `REDACTED` in request traces,
+curl diagnostics, and URLs embedded in headers or JSON bodies. Request destinations
+are unchanged. URL userinfo/fragments are omitted, workflow callback identifiers
+are redacted, and query values are redacted by default except narrowly validated
+metadata values.
 Redaction cannot identify every sensitive value in arbitrary application data:
 resource names, subjects/emails, and ordinary body fields remain visible. Treat
 high-verbosity logs as sensitive operational data and review them before sharing.
@@ -611,3 +614,40 @@ running these tests. Never delete bootstrap bindings or revoke the sole admin.
 If convergence is not observed within the bounded window, record the timeout
 rather than claiming success. Live testing requires explicit test identities and
 project selection; unit tests do not use live credentials.
+
+### Discover platform roles
+
+```bash
+gcphcpctl platformrole list --env integration --region us-central1
+gcphcpctl platformrole get cluster-viewer --env integration --region us-central1
+gcphcpctl platformrole get service-admin --api-endpoint https://API_HOST -o yaml
+gcphcpctl platformrole list --env integration --region us-central1 -o json
+```
+
+All authenticated users can discover system-managed PlatformRoles and their
+complete permission sets, without a RoleBinding or additional discovery grant.
+The commands are read-only and always use platform-scoped public API paths.
+Project values from `--project`, `GCPHCPCTL_PROJECT`, or config are accepted but
+ignored; they do not filter the catalog. Environment and region still select
+the service instance. Namespaced commands such as `role` and `rolebinding`
+continue to require a project.
+
+Lists aggregate up to 100 pages. Repeated continuation tokens or a catalog
+requiring more pages return an error without partial output.
+
+An explicit API endpoint from flag/environment/config overrides discovery and
+works without an OIDC issuer or a discovery request. Otherwise `--env` and
+`--region` resolve the API endpoint through the normal discovery manifest.
+List text shows NAME, PERMISSIONS (count), and AGE; get text shows every
+permission. JSON/YAML retain the public Kubernetes resource shape and full
+permissions, but item metadata is minimized to name and creation timestamp
+(no managed fields, GitOps annotations, labels, or internal metadata).
+
+The server and ESPv2 Endpoints configuration must both support the new routes.
+401/403/404 use the shared fixed errors (`not authenticated`, `permission denied`,
+`not found`); the CLI does not infer a missing grant or fall back to the private
+API. Role definitions continue to be managed privately through Helm.
+
+Discovery uses small CLI-local PlatformRole wire types, so it does not require a
+Gecko dependency update or change existing upgrade-policy commands. The public
+server and gateway still need the PlatformRole discovery endpoints.

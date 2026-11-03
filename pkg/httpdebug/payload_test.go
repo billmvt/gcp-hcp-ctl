@@ -135,6 +135,8 @@ func TestPayloadSecretListContext(t *testing.T) {
 	}
 }
 
+// TestPayloadAmbiguousCredentialURLs ensures whitespace cannot hide URL userinfo from
+// payload, header or curl redaction.
 func TestPayloadAmbiguousCredentialURLs(t *testing.T) {
 	for _, tc := range []struct{ name, value string }{
 		{"numeric-prefix", "https://user:123 review-marker@example.test/path?token=query-marker"},
@@ -173,7 +175,7 @@ func TestPayloadAmbiguousCredentialURLs(t *testing.T) {
 			}
 		})
 	}
-	if got := safePayloadString("visit https://example.test:443 to continue", 0); got != "visit https://example.test:443 to continue" {
+	if got := safePayloadString("visit https://example.test:443 to continue", 0); got != "visit https://REDACTED to continue" {
 		t.Errorf("ordinary URL context changed: %s", got)
 	}
 }
@@ -304,6 +306,8 @@ func TestPayloadVerbosityTruncation(t *testing.T) {
 	}
 }
 
+// TestPayloadCredentialBearingStrings checks credential-like strings and embedded URLs
+// while preserving useful JSON context.
 func TestPayloadCredentialBearingStrings(t *testing.T) {
 	for _, tc := range []struct {
 		name, value string
@@ -331,7 +335,7 @@ func TestPayloadCredentialBearingStrings(t *testing.T) {
 	if err := json.Unmarshal([]byte(got), &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded["endpoint"] != "https://example.test/roles?X-Goog-Signature=REDACTED&limit=7" || decoded["message"] != "visit https://example.test/roles?token=REDACTED to continue" {
+	if decoded["endpoint"] != "https://REDACTED/roles?X-Goog-Signature=REDACTED&limit=7" || decoded["message"] != "visit https://REDACTED/roles?token=REDACTED to continue" {
 		t.Fatalf("URL sanitization discarded safe context: %v", decoded)
 	}
 }
@@ -428,6 +432,8 @@ func TestPayloadCompleteJSONOnly(t *testing.T) {
 	}
 }
 
+// TestCurlPayloadShellQuotingAndRedaction checks shell quoting and masking without exposing
+// or replaying request bodies.
 func TestCurlPayloadShellQuotingAndRedaction(t *testing.T) {
 	req, err := http.NewRequest(http.MethodPatch, "https://user:password@example.test/v1/rolebindings?token=url-secret&limit=2#fragment-secret", strings.NewReader("body-secret"))
 	if err != nil {
@@ -441,7 +447,7 @@ func TestCurlPayloadShellQuotingAndRedaction(t *testing.T) {
 	}
 	beforeHeaders, beforeURL := req.Header.Clone(), req.URL.String()
 	got := curlCommand(req)
-	want := `curl -X 'PATCH' -H 'Authorization: REDACTED' -H 'Content-Type: application/json' -H 'User-Agent: agent'"'"'s $(echo bad); value' -H 'X-New-Credential: REDACTED' 'https://example.test/v1/rolebindings?token=REDACTED&limit=2'`
+	want := `curl -X 'PATCH' -H 'Authorization: REDACTED' -H 'Content-Type: application/json' -H 'User-Agent: agent'"'"'s $(echo bad); value' -H 'X-New-Credential: REDACTED' 'https://REDACTED/v1/rolebindings?token=REDACTED&limit=2'`
 	if got != want {
 		t.Fatalf("curl command = %s, want %s", got, want)
 	}

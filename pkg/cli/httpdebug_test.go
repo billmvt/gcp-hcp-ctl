@@ -84,7 +84,7 @@ func TestVerbosityPlatformCommand(t *testing.T) {
 			}
 			assertProgressiveTrace(t, stderr.String(), tc.level)
 			if tc.level >= 6 {
-				for _, want := range []string{`method="GET"`, server.URL + path, "status=" + strconv.Itoa(tc.status), "elapsed="} {
+				for _, want := range []string{`method="GET"`, "http://REDACTED" + path, "status=" + strconv.Itoa(tc.status), "elapsed="} {
 					if !strings.Contains(stderr.String(), want) {
 						t.Errorf("missing %q in trace: %s", want, stderr.String())
 					}
@@ -204,7 +204,7 @@ func TestVerbosityRoleBindingCreate(t *testing.T) {
 					}
 					assertProgressiveTrace(t, trace, level)
 					if level >= 6 {
-						for _, want := range []string{`method="POST"`, server.URL + path, "status=201"} {
+						for _, want := range []string{`method="POST"`, "http://REDACTED" + path, "status=201"} {
 							if !strings.Contains(trace, want) {
 								t.Errorf("trace missing %q: %s", want, trace)
 							}

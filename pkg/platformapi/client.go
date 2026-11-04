@@ -43,14 +43,19 @@ type Client struct {
 // NewClient creates a platform-api client from an API endpoint URL, project ID, and token source.
 // The project is used as the Kubernetes namespace for all scoped operations.
 func NewClient(apiEndpoint, project string, tokenSource *auth.TokenSource) (*Client, error) {
-	if tokenSource == nil {
-		return nil, fmt.Errorf("token source is required")
-	}
 	if project == "" {
 		return nil, fmt.Errorf("project is required (set --project, GCPHCPCTL_PROJECT, or project in config)")
 	}
+	return newClient(apiEndpoint, project, tokenSource)
+}
+
+// newClient shares HTTPS/authenticated transport setup with the read-only catalog client.
+func newClient(apiEndpoint, project string, tokenSource *auth.TokenSource) (*Client, error) {
+	if tokenSource == nil {
+		return nil, fmt.Errorf("token source is required")
+	}
 	if !strings.HasPrefix(apiEndpoint, "https://") {
-		return nil, fmt.Errorf("API endpoint must use HTTPS: %s", apiEndpoint)
+		return nil, fmt.Errorf("API endpoint must use HTTPS")
 	}
 
 	apiEndpoint = strings.TrimRight(apiEndpoint, "/")
@@ -63,7 +68,8 @@ func NewClient(apiEndpoint, project string, tokenSource *auth.TokenSource) (*Cli
 
 	rc, err := rest.RESTClientFor(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("creating REST client: %w", err)
+		// Parser errors can contain endpoint hosts, userinfo and query credentials.
+		return nil, fmt.Errorf("creating REST client: invalid API endpoint configuration")
 	}
 
 	return &Client{restClient: rc, project: project}, nil
@@ -83,7 +89,8 @@ func clientRESTConfig(endpoint string) *rest.Config {
 
 // NewClientForTest builds a credential-free client for a local HTTP test server.
 // It must never be used for production requests: unlike NewClient, it does not
-// enforce HTTPS or install an authentication transport.
+// enforce HTTPS or install an authentication transport. Client-side throttling
+// is disabled only for this loopback-only test helper.
 func NewClientForTest(rawURL, project string) (*Client, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -93,7 +100,9 @@ func NewClientForTest(rawURL, project string) (*Client, error) {
 	if parsed.Scheme != "http" || parsed.Hostname() == "" || parsed.User != nil || (parsed.Hostname() != "localhost" && (ip == nil || !ip.IsLoopback())) {
 		return nil, fmt.Errorf("test client requires a loopback HTTP endpoint")
 	}
-	rc, err := rest.RESTClientFor(clientRESTConfig(rawURL))
+	cfg := clientRESTConfig(rawURL)
+	cfg.QPS = -1 // Loopback-only test clients must not wait on request throttling.
+	rc, err := rest.RESTClientFor(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("creating REST client: %w", err)
 	}

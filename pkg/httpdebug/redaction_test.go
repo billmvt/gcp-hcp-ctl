@@ -15,6 +15,8 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+// TestTraceRedactsURLWithoutChangingRequest checks that tracing masks URL secrets without
+// changing the outbound request.
 func TestTraceRedactsURLWithoutChangingRequest(t *testing.T) {
 	for _, raw := range []string{
 		"https://private-user:private-password@example.com/resource?limit=10&access_token=private-token&api_key=private-key#private-fragment",
@@ -44,7 +46,7 @@ func TestTraceRedactsURLWithoutChangingRequest(t *testing.T) {
 			if strings.Contains(trace.String(), "private-") {
 				t.Errorf("secret leaked: %s", trace.String())
 			}
-			if !strings.Contains(trace.String(), "example.com/") {
+			if !strings.Contains(trace.String(), "https://REDACTED/") {
 				t.Errorf("missing useful URL: %s", trace.String())
 			}
 		})

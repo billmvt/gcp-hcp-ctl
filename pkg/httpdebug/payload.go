@@ -197,12 +197,15 @@ func sanitizeJSON(value any, depth int) any {
 var (
 	privateKeyText = regexp.MustCompile(`(?i)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`)
 	authText       = regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+\S+`)
-	payloadURLText = regexp.MustCompile(`(?i)[a-z][a-z0-9+.-]*://\S+`)
+	// Scheme-relative references have authorities and credentials too.
+	payloadURLText = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*:)?//\S+`)
 	// A whitespace-delimited URL prefix can parse as a host/port even when
 	// the remaining text is userinfo. Never retain that ambiguous suffix.
-	ambiguousURLUserinfo = regexp.MustCompile(`(?i)[a-z][a-z0-9+.-]*://[^/?#]*\s[^/?#]*@`)
+	ambiguousURLUserinfo = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*:)?//[^/?#]*\s[^/?#]*@`)
 )
 
+// safePayloadString masks credentials and URL authorities, including scheme-relative
+// references, before payload and allowlisted-header values reach trace output.
 func safePayloadString(value string, depth int) string {
 	if privateKeyText.MatchString(value) || authText.MatchString(value) || ambiguousURLUserinfo.MatchString(value) {
 		return "REDACTED"

@@ -8,7 +8,8 @@ import (
 	"strings"
 )
 
-// safeURL retains endpoints and resource paths, but never userinfo or fragments.
+// safeURL retains schemes and resource paths, but masks URL authorities (hosts
+// and ports) and removes userinfo and fragments. It never mutates the request.
 // Query values are redacted by default: only bounded numeric parameters and
 // selected boolean/enum values are retained. Unknown future credentials therefore
 // do not need to be added to a denylist before they are safe to trace.
@@ -18,6 +19,9 @@ func safeURL(original *url.URL) string {
 	}
 	u := *original
 	u.User = nil
+	if u.Host != "" {
+		u.Host = "REDACTED"
+	}
 	u.Fragment = ""
 	u.RawFragment = ""
 	// Workflow callback identifiers are capability-like, unlike resource names.

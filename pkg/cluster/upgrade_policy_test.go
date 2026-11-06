@@ -13,6 +13,13 @@ import (
 	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
 )
 
+func TestClearUpgradePolicyRequiresConfirm(t *testing.T) {
+	err, _, _ := executeClusterTestCommand(t, nil, context.Background(), "clear-upgrade-policy", "upgrade-poc")
+	if err == nil || !strings.Contains(err.Error(), "--confirm") {
+		t.Fatalf("error = %v, want --confirm required error", err)
+	}
+}
+
 func TestClearUpgradePolicy(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +57,7 @@ func TestClearUpgradePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err, _, _ := executeClusterTestCommand(t, client, context.Background(), "clear-upgrade-policy", "upgrade-poc"); err != nil {
+	if err, _, _ := executeClusterTestCommand(t, client, context.Background(), "clear-upgrade-policy", "upgrade-poc", "--confirm"); err != nil {
 		t.Fatalf("clearing policy: %v", err)
 	}
 	if requests != 1 {
@@ -68,7 +75,7 @@ func TestClearUpgradePolicyOutputsNoneWhenPolicyAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err, out, _ := executeClusterTestCommand(t, client, context.Background(), "clear-upgrade-policy", "upgrade-poc")
+	err, out, _ := executeClusterTestCommand(t, client, context.Background(), "clear-upgrade-policy", "upgrade-poc", "--confirm")
 	if err != nil {
 		t.Fatalf("clearing policy: %v", err)
 	}

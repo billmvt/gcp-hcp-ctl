@@ -152,12 +152,6 @@ func (c *Client) Versions() VersionInterface {
 	return &versionClient{restClient: c.restClient}
 }
 
-// ControlPlaneUpgradePolicies returns a ControlPlaneUpgradePolicyInterface for
-// performing control-plane upgrade policy operations.
-func (c *Client) ControlPlaneUpgradePolicies() ControlPlaneUpgradePolicyInterface {
-	return &controlPlaneUpgradePolicyClient{restClient: c.restClient}
-}
-
 // Channels returns a ChannelInterface for performing channel operations.
 func (c *Client) Channels() ChannelInterface {
 	return &channelClient{restClient: c.restClient}
@@ -168,6 +162,7 @@ type ClusterInterface interface {
 	Create(ctx context.Context, namespace string, cluster *gcpv1.Cluster) (*gcpv1.Cluster, error)
 	Get(ctx context.Context, namespace, name string) (*gcpv1.Cluster, error)
 	List(ctx context.Context, namespace string) (*gcpv1.ClusterList, error)
+	Patch(ctx context.Context, namespace, name string, patchData []byte) (*gcpv1.Cluster, error)
 	Delete(ctx context.Context, namespace, name string) error
 }
 
@@ -210,6 +205,21 @@ func (c *clusterClient) List(ctx context.Context, namespace string) (*gcpv1.Clus
 		Resource("clusters").
 		Do(ctx)
 	if err := decodeResult(response, result, http.MethodGet, "clusters", "", false); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *clusterClient) Patch(ctx context.Context, namespace, name string, patchData []byte) (*gcpv1.Cluster, error) {
+	result := &gcpv1.Cluster{}
+	response := c.restClient.Patch(types.MergePatchType).
+		MaxRetries(0).
+		Namespace(namespace).
+		Resource("clusters").
+		Name(name).
+		Body(patchData).
+		Do(ctx)
+	if err := decodeResult(response, result, http.MethodPatch, "clusters", name, false); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -371,75 +381,6 @@ func (n *nodePoolClient) Delete(ctx context.Context, namespace, name string) err
 		Name(name).
 		Do(ctx)
 	return normalizeResult(response, http.MethodDelete, "nodepools", name, false)
-}
-
-// ControlPlaneUpgradePolicyInterface defines operations on
-// ControlPlaneUpgradePolicy resources.
-type ControlPlaneUpgradePolicyInterface interface {
-	Create(ctx context.Context, namespace string, policy *gcpv1.ControlPlaneUpgradePolicy) (*gcpv1.ControlPlaneUpgradePolicy, error)
-	Get(ctx context.Context, namespace, name string) (*gcpv1.ControlPlaneUpgradePolicy, error)
-	Patch(ctx context.Context, namespace, name string, patchData []byte) (*gcpv1.ControlPlaneUpgradePolicy, error)
-	Delete(ctx context.Context, namespace, name string) error
-}
-
-type controlPlaneUpgradePolicyClient struct {
-	restClient rest.Interface
-}
-
-// Create posts a policy without retries and reports uncertain write outcomes.
-func (c *controlPlaneUpgradePolicyClient) Create(ctx context.Context, namespace string, policy *gcpv1.ControlPlaneUpgradePolicy) (*gcpv1.ControlPlaneUpgradePolicy, error) {
-	result := &gcpv1.ControlPlaneUpgradePolicy{}
-	response := c.restClient.Post().
-		MaxRetries(0).
-		Namespace(namespace).
-		Resource("controlplaneupgradepolicies").
-		Body(policy).
-		Do(ctx)
-	if err := decodeResult(response, result, http.MethodPost, "controlplaneupgradepolicies", policy.Name, true); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-// Get retrieves a policy and normalizes request and response decoding errors.
-func (c *controlPlaneUpgradePolicyClient) Get(ctx context.Context, namespace, name string) (*gcpv1.ControlPlaneUpgradePolicy, error) {
-	result := &gcpv1.ControlPlaneUpgradePolicy{}
-	response := c.restClient.Get().
-		Namespace(namespace).
-		Resource("controlplaneupgradepolicies").
-		Name(name).
-		Do(ctx)
-	if err := decodeResult(response, result, http.MethodGet, "controlplaneupgradepolicies", name, false); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-// Patch applies a JSON Merge Patch without retries and returns the updated policy.
-func (c *controlPlaneUpgradePolicyClient) Patch(ctx context.Context, namespace, name string, patchData []byte) (*gcpv1.ControlPlaneUpgradePolicy, error) {
-	result := &gcpv1.ControlPlaneUpgradePolicy{}
-	response := c.restClient.Patch(types.MergePatchType).
-		MaxRetries(0).
-		Namespace(namespace).
-		Resource("controlplaneupgradepolicies").
-		Name(name).
-		Body(patchData).
-		Do(ctx)
-	if err := decodeResult(response, result, http.MethodPatch, "controlplaneupgradepolicies", name, false); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-// Delete removes a policy without retries and normalizes API errors.
-func (c *controlPlaneUpgradePolicyClient) Delete(ctx context.Context, namespace, name string) error {
-	response := c.restClient.Delete().
-		MaxRetries(0).
-		Namespace(namespace).
-		Resource("controlplaneupgradepolicies").
-		Name(name).
-		Do(ctx)
-	return normalizeResult(response, http.MethodDelete, "controlplaneupgradepolicies", name, false)
 }
 
 // NamespaceForProject returns the namespace for a given GCP project ID.

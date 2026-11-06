@@ -314,9 +314,8 @@ func TestClusterCommandErrorBoundary(t *testing.T) {
 	}{
 		{"list unauthorized", 401, leakedResponse, "listing clusters: not authenticated", []string{"list"}},
 		{"list forbidden", 403, leakedResponse, "listing clusters: permission denied", []string{"list"}},
-		{"upgrade policy forbidden", 403, leakedResponse, "getting upgrade policy: permission denied", []string{"get-upgrade-policy", "test-cluster"}},
-		{"upgrade policy update unauthorized", 401, leakedResponse, "updating upgrade policy: not authenticated", []string{"update-upgrade-policy", "test-cluster", "--start=2026-10-10T02:00:00Z", "--duration-minutes=240", "--day=saturday"}},
-		{"upgrade policy delete forbidden", 403, leakedResponse, "deleting upgrade policy: permission denied", []string{"delete-upgrade-policy", "test-cluster", "--confirm"}},
+		{"set upgrade policy unauthorized", 401, leakedResponse, "setting upgrade policy: not authenticated", []string{"set-upgrade-policy", "test-cluster", "--start-time=2026-10-10T02:00:00Z", "--duration-seconds=14400", "--day=saturday"}},
+		{"set upgrade policy forbidden", 403, leakedResponse, "setting upgrade policy: permission denied", []string{"set-upgrade-policy", "test-cluster", "--start-time=2026-10-10T02:00:00Z", "--duration-seconds=14400", "--day=saturday"}},
 		{"get missing", 404, `{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound"}`, `looking up cluster "missing" in project "my-project": not found`, []string{"get", "missing"}},
 		{"login missing", 404, `{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound"}`, `resolving cluster endpoint: looking up cluster "missing" in project "my-project": not found`, []string{"login", "missing"}},
 	} {

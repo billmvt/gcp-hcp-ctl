@@ -75,6 +75,37 @@ func newSetUpgradePolicyCmd() *cobra.Command {
 	return cmd
 }
 
+// newClearUpgradePolicyCmd removes the upgrade policy (spec.maintenance) from an
+// existing cluster, allowing the platform to start automatic upgrades at any time.
+// The command is idempotent: running it on a cluster that has no policy is a no-op.
+func newClearUpgradePolicyCmd() *cobra.Command {
+	var outputFmt string
+	cmd := &cobra.Command{
+		Use:   "clear-upgrade-policy <cluster-name>",
+		Short: "Remove the control-plane upgrade policy from an existing cluster",
+		Long: "Remove the upgrade policy (spec.maintenance) from an existing cluster. " +
+			"After clearing, the platform may start automatic upgrades at any time. " +
+			"The command is idempotent: running it on a cluster that already has no policy succeeds without error.",
+		Args: clusterNameArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// A JSON merge patch with an explicit null removes spec.maintenance even
+			// though ClusterSpec.Maintenance is tagged omitempty: the raw bytes reach
+			// the API server without going through typed-object serialisation, so
+			// omitempty cannot suppress the null.
+			patchData := []byte(`{"spec":{"maintenance":null}}`)
+
+			client := clientFromCmd(cmd)
+			updated, err := client.Clusters().Patch(cmd.Context(), client.Namespace(), args[0], patchData)
+			if err != nil {
+				return fmt.Errorf("clearing upgrade policy: %w", err)
+			}
+			return printUpgradePolicy(cmd.OutOrStdout(), updated, outputFmt)
+		},
+	}
+	cmd.Flags().StringVarP(&outputFmt, "output", "o", "text", "Output format: text, json, yaml")
+	return cmd
+}
+
 // clusterNameArgs requires one cluster name and includes usage when it is missing.
 func clusterNameArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {

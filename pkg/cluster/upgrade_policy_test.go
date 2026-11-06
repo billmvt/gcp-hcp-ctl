@@ -13,6 +13,70 @@ import (
 	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
 )
 
+func TestClearUpgradePolicy(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPatch || r.URL.Path != "/apis/gcp.managed.openshift.io/v1/namespaces/my-project/clusters/upgrade-poc" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/merge-patch+json" {
+			t.Errorf("Content-Type = %q", got)
+		}
+		// The patch must contain an explicit null for spec.maintenance so that
+		// omitempty on ClusterSpec.Maintenance cannot suppress it.
+		var patch map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+			t.Errorf("decoding patch: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		specRaw, ok := patch["spec"]
+		if !ok {
+			t.Error("patch missing spec field")
+		} else {
+			var spec map[string]json.RawMessage
+			if err := json.Unmarshal(specRaw, &spec); err != nil {
+				t.Errorf("decoding spec: %v", err)
+			} else if string(spec["maintenance"]) != "null" {
+				t.Errorf("spec.maintenance = %s, want null", spec["maintenance"])
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"apiVersion":"gcp.managed.openshift.io/v1","kind":"Cluster","metadata":{"name":"upgrade-poc"}}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := platformapi.NewClientForTest(server.URL, "my-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err, _, _ := executeClusterTestCommand(t, client, context.Background(), "clear-upgrade-policy", "upgrade-poc"); err != nil {
+		t.Fatalf("clearing policy: %v", err)
+	}
+	if requests != 1 {
+		t.Errorf("requests = %d, want 1", requests)
+	}
+}
+
+func TestClearUpgradePolicyOutputsNoneWhenPolicyAbsent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"apiVersion":"gcp.managed.openshift.io/v1","kind":"Cluster","metadata":{"name":"upgrade-poc"}}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := platformapi.NewClientForTest(server.URL, "my-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err, out, _ := executeClusterTestCommand(t, client, context.Background(), "clear-upgrade-policy", "upgrade-poc")
+	if err != nil {
+		t.Fatalf("clearing policy: %v", err)
+	}
+	if !strings.Contains(out, "none") {
+		t.Errorf("expected 'none' in output for absent policy, got: %q", out)
+	}
+}
+
 func TestSetUpgradePolicyExclusions(t *testing.T) {
 	for _, tc := range []struct {
 		name        string

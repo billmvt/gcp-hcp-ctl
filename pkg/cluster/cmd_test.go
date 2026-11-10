@@ -21,6 +21,83 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+func TestPrintClusterMaintenance(t *testing.T) {
+	startTime, _ := time.Parse(time.RFC3339, "2026-10-03T02:00:00Z")
+	exclusionStart, _ := time.Parse(time.RFC3339, "2026-12-20T00:00:00Z")
+	exclusionEnd, _ := time.Parse(time.RFC3339, "2027-01-03T00:00:00Z")
+	exclusions := []gcpv1.ControlPlaneMaintenanceExclusion{{
+		Name:      "holiday-freeze",
+		StartTime: metav1.NewTime(exclusionStart),
+		EndTime:   metav1.NewTime(exclusionEnd),
+	}}
+
+	t.Run("renders window and exclusions", func(t *testing.T) {
+		c := &gcpv1.Cluster{}
+		c.Name = "my-cluster"
+		c.Spec.Maintenance = &gcpv1.ClusterMaintenanceSpec{
+			Window: &gcpv1.ControlPlaneMaintenanceWindow{
+				StartTime:       metav1.NewTime(startTime),
+				DurationSeconds: 14400,
+				Recurrence: gcpv1.ControlPlaneMaintenanceRecurrence{
+					Frequency:  "weekly",
+					DaysOfWeek: []string{"saturday"},
+				},
+			},
+			Exclusions: &exclusions,
+		}
+
+		var buf bytes.Buffer
+		if err := printCluster(&buf, c, "text"); err != nil {
+			t.Fatalf("printCluster: %v", err)
+		}
+		got := buf.String()
+		for _, want := range []string{
+			"Upgrade Policy:",
+			"Start Time:    2026-10-03T02:00:00Z",
+			"Duration:      14400 seconds",
+			"Frequency:     weekly",
+			"Days:          saturday",
+			"Exclusions:",
+			"holiday-freeze:",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("output missing %q:\n%s", want, got)
+			}
+		}
+	})
+
+	t.Run("omits section when maintenance is nil", func(t *testing.T) {
+		c := &gcpv1.Cluster{}
+		c.Name = "my-cluster"
+
+		var buf bytes.Buffer
+		if err := printCluster(&buf, c, "text"); err != nil {
+			t.Fatalf("printCluster: %v", err)
+		}
+		if strings.Contains(buf.String(), "Upgrade Policy:") {
+			t.Errorf("unexpected Upgrade Policy section in output:\n%s", buf.String())
+		}
+	})
+
+	t.Run("renders window-less policy", func(t *testing.T) {
+		c := &gcpv1.Cluster{}
+		c.Name = "my-cluster"
+		c.Spec.Maintenance = &gcpv1.ClusterMaintenanceSpec{}
+
+		var buf bytes.Buffer
+		if err := printCluster(&buf, c, "text"); err != nil {
+			t.Fatalf("printCluster: %v", err)
+		}
+		got := buf.String()
+		if !strings.Contains(got, "Upgrade Policy:") {
+			t.Errorf("missing Upgrade Policy section:\n%s", got)
+		}
+		if !strings.Contains(got, "Window:        none") {
+			t.Errorf("missing 'Window: none' for absent window:\n%s", got)
+		}
+	})
+}
+
 func TestClusterStatus(t *testing.T) {
 	t.Run("When there are no conditions it should return Pending", func(t *testing.T) {
 		c := &gcpv1.Cluster{
@@ -314,9 +391,8 @@ func TestClusterCommandErrorBoundary(t *testing.T) {
 	}{
 		{"list unauthorized", 401, leakedResponse, "listing clusters: not authenticated", []string{"list"}},
 		{"list forbidden", 403, leakedResponse, "listing clusters: permission denied", []string{"list"}},
-		{"upgrade policy forbidden", 403, leakedResponse, "getting upgrade policy: permission denied", []string{"get-upgrade-policy", "test-cluster"}},
-		{"upgrade policy update unauthorized", 401, leakedResponse, "updating upgrade policy: not authenticated", []string{"update-upgrade-policy", "test-cluster", "--start=2026-10-10T02:00:00Z", "--duration-minutes=240", "--day=saturday"}},
-		{"upgrade policy delete forbidden", 403, leakedResponse, "deleting upgrade policy: permission denied", []string{"delete-upgrade-policy", "test-cluster", "--confirm"}},
+		{"set upgrade policy unauthorized", 401, leakedResponse, "setting upgrade policy: not authenticated", []string{"set-upgrade-policy", "test-cluster", "--start-time=2026-10-10T02:00:00Z", "--duration-seconds=14400", "--day=saturday"}},
+		{"set upgrade policy forbidden", 403, leakedResponse, "setting upgrade policy: permission denied", []string{"set-upgrade-policy", "test-cluster", "--start-time=2026-10-10T02:00:00Z", "--duration-seconds=14400", "--day=saturday"}},
 		{"get missing", 404, `{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound"}`, `looking up cluster "missing" in project "my-project": not found`, []string{"get", "missing"}},
 		{"login missing", 404, `{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound"}`, `resolving cluster endpoint: looking up cluster "missing" in project "my-project": not found`, []string{"login", "missing"}},
 	} {

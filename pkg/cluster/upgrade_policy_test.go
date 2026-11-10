@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,24 +13,78 @@ import (
 	gcpv1 "github.com/openshift-online/gecko/platform-api/api/public/v1"
 )
 
-type failingPolicyWriter struct{ err error }
-
-func (w failingPolicyWriter) Write([]byte) (int, error) { return 0, w.err }
-
-func TestDeleteUpgradePolicyReturnsOutputError(t *testing.T) {
-	want := errors.New("output unavailable")
-	client := clusterTestClient(t, http.StatusOK, `{}`)
-	cmd := newDeleteUpgradePolicyCmd()
-	cmd.SetContext(context.WithValue(context.Background(), clientKey, client))
-	cmd.SetOut(failingPolicyWriter{err: want})
-	cmd.SetErr(io.Discard)
-	cmd.SetArgs([]string{"upgrade-poc", "--confirm"})
-	if err := cmd.Execute(); !errors.Is(err, want) {
-		t.Fatalf("error = %v, want %v", err, want)
+func TestClearUpgradePolicyRequiresConfirm(t *testing.T) {
+	err, _, _ := executeClusterTestCommand(t, nil, context.Background(), "clear-upgrade-policy", "upgrade-poc")
+	if err == nil || !strings.Contains(err.Error(), "--confirm") {
+		t.Fatalf("error = %v, want --confirm required error", err)
 	}
 }
 
-func TestUpdateUpgradePolicyExclusions(t *testing.T) {
+func TestClearUpgradePolicy(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPatch || r.URL.Path != "/apis/gcp.managed.openshift.io/v1/namespaces/my-project/clusters/upgrade-poc" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/merge-patch+json" {
+			t.Errorf("Content-Type = %q", got)
+		}
+		// The patch must contain an explicit null for spec.maintenance so that
+		// omitempty on ClusterSpec.Maintenance cannot suppress it.
+		var patch map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+			t.Errorf("decoding patch: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		specRaw, ok := patch["spec"]
+		if !ok {
+			t.Error("patch missing spec field")
+		} else {
+			var spec map[string]json.RawMessage
+			if err := json.Unmarshal(specRaw, &spec); err != nil {
+				t.Errorf("decoding spec: %v", err)
+			} else if string(spec["maintenance"]) != "null" {
+				t.Errorf("spec.maintenance = %s, want null", spec["maintenance"])
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"apiVersion":"gcp.managed.openshift.io/v1","kind":"Cluster","metadata":{"name":"upgrade-poc"}}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := platformapi.NewClientForTest(server.URL, "my-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err, _, _ := executeClusterTestCommand(t, client, context.Background(), "clear-upgrade-policy", "upgrade-poc", "--confirm"); err != nil {
+		t.Fatalf("clearing policy: %v", err)
+	}
+	if requests != 1 {
+		t.Errorf("requests = %d, want 1", requests)
+	}
+}
+
+func TestClearUpgradePolicyOutputsNoneWhenPolicyAbsent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"apiVersion":"gcp.managed.openshift.io/v1","kind":"Cluster","metadata":{"name":"upgrade-poc"}}`))
+	}))
+	t.Cleanup(server.Close)
+	client, err := platformapi.NewClientForTest(server.URL, "my-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err, out, _ := executeClusterTestCommand(t, client, context.Background(), "clear-upgrade-policy", "upgrade-poc", "--confirm")
+	if err != nil {
+		t.Fatalf("clearing policy: %v", err)
+	}
+	if !strings.Contains(out, "none") {
+		t.Errorf("expected 'none' in output for absent policy, got: %q", out)
+	}
+}
+
+func TestSetUpgradePolicyExclusions(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		flags       []string
@@ -48,21 +100,23 @@ func TestUpdateUpgradePolicyExclusions(t *testing.T) {
 			requests := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests++
-				if r.Method != http.MethodPatch || r.URL.Path != "/apis/gcp.managed.openshift.io/v1/namespaces/my-project/controlplaneupgradepolicies/upgrade-poc" {
+				if r.Method != http.MethodPatch || r.URL.Path != "/apis/gcp.managed.openshift.io/v1/namespaces/my-project/clusters/upgrade-poc" {
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 				}
 				if got := r.Header.Get("Content-Type"); got != "application/merge-patch+json" {
 					t.Errorf("Content-Type = %q", got)
 				}
 				var patch struct {
-					Spec map[string]json.RawMessage `json:"spec"`
+					Spec struct {
+						Maintenance map[string]json.RawMessage `json:"maintenance"`
+					} `json:"spec"`
 				}
 				if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 					t.Errorf("decoding patch: %v", err)
 					w.WriteHeader(http.StatusBadRequest)
 					return
 				}
-				raw, present := patch.Spec["maintenanceExclusions"]
+				raw, present := patch.Spec.Maintenance["exclusions"]
 				if present != tc.wantPresent {
 					t.Errorf("exclusions present = %v, want %v", present, tc.wantPresent)
 				}
@@ -82,16 +136,16 @@ func TestUpdateUpgradePolicyExclusions(t *testing.T) {
 					}
 				}
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"apiVersion":"gcp.managed.openshift.io/v1","kind":"ControlPlaneUpgradePolicy","metadata":{"name":"upgrade-poc"}}`))
+				_, _ = w.Write([]byte(`{"apiVersion":"gcp.managed.openshift.io/v1","kind":"Cluster","metadata":{"name":"upgrade-poc"}}`))
 			}))
 			t.Cleanup(server.Close)
 			client, err := platformapi.NewClientForTest(server.URL, "my-project")
 			if err != nil {
 				t.Fatal(err)
 			}
-			args := append([]string{"update-upgrade-policy", "upgrade-poc", "--start=2026-10-10T02:00:00Z", "--duration-minutes=240", "--day=saturday"}, tc.flags...)
+			args := append([]string{"set-upgrade-policy", "upgrade-poc", "--start-time=2026-10-10T02:00:00Z", "--duration-seconds=14400", "--day=saturday"}, tc.flags...)
 			if err, _, _ := executeClusterTestCommand(t, client, context.Background(), args...); err != nil {
-				t.Fatalf("updating policy: %v", err)
+				t.Fatalf("setting policy: %v", err)
 			}
 			if requests != 1 {
 				t.Errorf("requests = %d, want 1", requests)
@@ -100,9 +154,9 @@ func TestUpdateUpgradePolicyExclusions(t *testing.T) {
 	}
 }
 
-func TestUpdateUpgradePolicyRejectsConflictingExclusionFlags(t *testing.T) {
+func TestSetUpgradePolicyRejectsConflictingExclusionFlags(t *testing.T) {
 	err, _, _ := executeClusterTestCommand(t, nil, context.Background(),
-		"update-upgrade-policy", "upgrade-poc", "--start=2026-10-10T02:00:00Z", "--duration-minutes=240", "--day=saturday",
+		"set-upgrade-policy", "upgrade-poc", "--start-time=2026-10-10T02:00:00Z", "--duration-seconds=14400", "--day=saturday",
 		"--clear-exclusions", "--exclusion=holiday,2026-12-20T00:00:00Z,2027-01-03T00:00:00Z")
 	if err == nil || !strings.Contains(err.Error(), "none of the others can be") {
 		t.Fatalf("error = %v, want mutually exclusive flag error", err)
@@ -111,32 +165,29 @@ func TestUpdateUpgradePolicyRejectsConflictingExclusionFlags(t *testing.T) {
 
 func TestBuildUpgradePolicy(t *testing.T) {
 	opts := upgradePolicyOptions{
-		start:           "2026-10-03T02:00:00Z",
-		durationMinutes: 240,
+		startTime:       "2026-10-03T02:00:00Z",
+		durationSeconds: 14400,
 		frequency:       "weekly",
 		days:            []string{"saturday"},
 		exclusions:      []string{"holiday-freeze,2026-12-20T00:00:00Z,2027-01-03T00:00:00Z"},
 	}
 
-	policy, err := opts.build("upgrade-poc")
+	maintenance, err := opts.build()
 	if err != nil {
 		t.Fatalf("building policy: %v", err)
 	}
 
-	if policy.Name != "upgrade-poc" {
-		t.Errorf("expected policy name %q, got %q", "upgrade-poc", policy.Name)
+	if maintenance.Window == nil {
+		t.Fatal("expected window to be set")
 	}
-	if policy.Spec.ClusterID != "upgrade-poc" {
-		t.Errorf("expected cluster ID %q, got %q", "upgrade-poc", policy.Spec.ClusterID)
+	if maintenance.Window.DurationSeconds != 14400 {
+		t.Errorf("expected duration 14400, got %d", maintenance.Window.DurationSeconds)
 	}
-	if policy.Spec.MaintenanceWindow.DurationMinutes != 240 {
-		t.Errorf("expected duration 240, got %d", policy.Spec.MaintenanceWindow.DurationMinutes)
+	if maintenance.Exclusions == nil || len(*maintenance.Exclusions) != 1 {
+		t.Fatalf("expected one exclusion")
 	}
-	if len(policy.Spec.MaintenanceExclusions) != 1 {
-		t.Fatalf("expected one exclusion, got %d", len(policy.Spec.MaintenanceExclusions))
-	}
-	if policy.Spec.MaintenanceExclusions[0].Name != "holiday-freeze" {
-		t.Errorf("expected exclusion name %q, got %q", "holiday-freeze", policy.Spec.MaintenanceExclusions[0].Name)
+	if (*maintenance.Exclusions)[0].Name != "holiday-freeze" {
+		t.Errorf("expected exclusion name %q, got %q", "holiday-freeze", (*maintenance.Exclusions)[0].Name)
 	}
 }
 
@@ -157,8 +208,8 @@ func TestBuildUpgradePolicyRecurrence(t *testing.T) {
 		{name: "duplicate day", frequency: "weekly", days: []string{"monday", "friday", "monday"}, wantError: `duplicate day "monday"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			opts := upgradePolicyOptions{start: "2026-10-10T02:00:00Z", durationMinutes: 240, frequency: tc.frequency, days: tc.days}
-			policy, err := opts.build("upgrade-poc")
+			opts := upgradePolicyOptions{startTime: "2026-10-10T02:00:00Z", durationSeconds: 14400, frequency: tc.frequency, days: tc.days}
+			maintenance, err := opts.build()
 			if tc.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
 					t.Fatalf("error = %v, want %q", err, tc.wantError)
@@ -168,8 +219,31 @@ func TestBuildUpgradePolicyRecurrence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := policy.Spec.MaintenanceWindow.Recurrence; got.Frequency != tc.frequency || strings.Join(got.DaysOfWeek, ",") != strings.Join(tc.days, ",") {
+			if got := maintenance.Window.Recurrence; got.Frequency != tc.frequency || strings.Join(got.DaysOfWeek, ",") != strings.Join(tc.days, ",") {
 				t.Errorf("unexpected recurrence: %+v", got)
+			}
+		})
+	}
+}
+
+func TestBuildUpgradePolicyRejectsInvalidDuration(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		duration int32
+	}{
+		{"zero", 0},
+		{"below minimum", 59},
+		{"above maximum", 86401},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := upgradePolicyOptions{
+				startTime:       "2026-10-03T02:00:00Z",
+				durationSeconds: tc.duration,
+				frequency:       "weekly",
+				days:            []string{"saturday"},
+			}
+			if _, err := opts.build(); err == nil {
+				t.Fatalf("expected duration %d to fail", tc.duration)
 			}
 		})
 	}
@@ -177,51 +251,93 @@ func TestBuildUpgradePolicyRecurrence(t *testing.T) {
 
 func TestBuildUpgradePolicyRejectsInvalidExclusion(t *testing.T) {
 	opts := upgradePolicyOptions{
-		start:           "2026-10-03T02:00:00Z",
-		durationMinutes: 240,
+		startTime:       "2026-10-03T02:00:00Z",
+		durationSeconds: 14400,
 		frequency:       "weekly",
 		days:            []string{"saturday"},
 		exclusions:      []string{"not-a-valid-exclusion"},
 	}
 
-	if _, err := opts.build("upgrade-poc"); err == nil {
+	if _, err := opts.build(); err == nil {
 		t.Fatal("expected invalid exclusion to fail")
 	}
 }
 
 func TestPrintUpgradePolicyYAML(t *testing.T) {
-	policy, err := (&upgradePolicyOptions{
-		start:           "2026-10-03T02:00:00Z",
-		durationMinutes: 240,
+	opts := &upgradePolicyOptions{
+		startTime:       "2026-10-03T02:00:00Z",
+		durationSeconds: 14400,
 		frequency:       "weekly",
 		days:            []string{"saturday"},
-	}).build("upgrade-poc")
+	}
+	maintenance, err := opts.build()
 	if err != nil {
 		t.Fatalf("building policy: %v", err)
 	}
-	policy.TypeMeta.APIVersion = ""
-	policy.TypeMeta.Kind = ""
 
-	var output bytes.Buffer
-	if err := printUpgradePolicy(&output, policy, "yaml"); err != nil {
+	cluster := &gcpv1.Cluster{}
+	cluster.Name = "upgrade-poc"
+	cluster.APIVersion = gcpv1.GroupVersion.String()
+	cluster.Kind = "Cluster"
+	cluster.Spec.Maintenance = maintenance
+
+	var buf bytes.Buffer
+	if err := printUpgradePolicy(&buf, cluster, "yaml"); err != nil {
 		t.Fatalf("printing policy: %v", err)
 	}
 
-	got := output.String()
+	got := buf.String()
+	// API-shaped JSON tag names must appear, not Go field names.
 	for _, want := range []string{
 		"apiVersion: gcp.managed.openshift.io/v1",
-		"kind: ControlPlaneUpgradePolicy",
-		"clusterID: upgrade-poc",
-		"durationMinutes: 240",
+		"kind: Cluster",
+		"durationSeconds: 14400",
 		"daysOfWeek:",
+		"startTime:",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output missing %q:\n%s", want, got)
 		}
 	}
-	for _, unwanted := range []string{"typemeta:", "objectmeta:", "clusterid:"} {
+	// Go-derived field names must not appear.
+	for _, unwanted := range []string{"typemeta:", "objectmeta:", "durationseconds:", "daysofweek:", "starttime:"} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("output contains Go field name %q:\n%s", unwanted, got)
+		}
+	}
+}
+
+func TestPrintUpgradePolicyText(t *testing.T) {
+	opts := &upgradePolicyOptions{
+		startTime:       "2026-10-03T02:00:00Z",
+		durationSeconds: 14400,
+		frequency:       "weekly",
+		days:            []string{"saturday"},
+	}
+	maintenance, err := opts.build()
+	if err != nil {
+		t.Fatalf("building policy: %v", err)
+	}
+
+	cluster := &gcpv1.Cluster{}
+	cluster.Name = "upgrade-poc"
+	cluster.Spec.Maintenance = maintenance
+
+	var buf bytes.Buffer
+	if err := printUpgradePolicy(&buf, cluster, "text"); err != nil {
+		t.Fatalf("printing policy: %v", err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{
+		"Cluster: upgrade-poc",
+		"Start Time:",
+		"Duration: 14400 seconds",
+		"Frequency: weekly",
+		"Days: saturday",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q:\n%s", want, got)
 		}
 	}
 }

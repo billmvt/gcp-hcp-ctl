@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/openshift-online/gcp-hcp-ctl/pkg/auth"
@@ -65,10 +66,8 @@ func NewClusterCmd(effective *config.Config) *cobra.Command {
 	clusterCmd.AddCommand(newListCmd())
 	clusterCmd.AddCommand(newDeleteCmd())
 	clusterCmd.AddCommand(newLoginCmd())
-	clusterCmd.AddCommand(newCreateUpgradePolicyCmd())
-	clusterCmd.AddCommand(newGetUpgradePolicyCmd())
-	clusterCmd.AddCommand(newUpdateUpgradePolicyCmd())
-	clusterCmd.AddCommand(newDeleteUpgradePolicyCmd())
+	clusterCmd.AddCommand(newSetUpgradePolicyCmd())
+	clusterCmd.AddCommand(newClearUpgradePolicyCmd())
 
 	return clusterCmd
 }
@@ -163,6 +162,24 @@ func printCluster(w io.Writer, c *gcpv1.Cluster, format string) error {
 		}
 		for _, cn := range net.ClusterNetwork {
 			fmt.Fprintf(bw, "  Cluster CIDR:  %s (/%d)\n", cn.CIDR, cn.HostPrefix)
+		}
+	}
+
+	if m := c.Spec.Maintenance; m != nil {
+		fmt.Fprintln(bw, "\nUpgrade Policy:")
+		if m.Window != nil {
+			fmt.Fprintf(bw, "  Start Time:    %s\n", m.Window.StartTime.UTC().Format(time.RFC3339))
+			fmt.Fprintf(bw, "  Duration:      %d seconds\n", m.Window.DurationSeconds)
+			fmt.Fprintf(bw, "  Frequency:     %s\n", m.Window.Recurrence.Frequency)
+			fmt.Fprintf(bw, "  Days:          %s\n", strings.Join(m.Window.Recurrence.DaysOfWeek, ", "))
+		} else {
+			fmt.Fprintln(bw, "  Window:        none")
+		}
+		if m.Exclusions != nil && len(*m.Exclusions) > 0 {
+			fmt.Fprintln(bw, "  Exclusions:")
+			for _, ex := range *m.Exclusions {
+				fmt.Fprintf(bw, "    %s: %s to %s\n", ex.Name, ex.StartTime.UTC().Format(time.RFC3339), ex.EndTime.UTC().Format(time.RFC3339))
+			}
 		}
 	}
 
